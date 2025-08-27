@@ -62,11 +62,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: "pending"
       });
 
+      const webhookUrl = `${req.protocol}://${req.get('host')}/api/payflowly-webhook`;
+      
       const payflowlyPayload = {
         app_id: PAYFLOWLY_APP_ID,
         reference_id: order.id,
         total: amount,
-        webhook_url: `${req.protocol}://${req.get('host')}/api/payflowly-webhook`,
+        webhook_url: webhookUrl,
         customer_id: customerInfo?.customerId || "default-customer",
         phone_code: "+2",
         phone_number: "01006736720",
@@ -74,6 +76,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         order_customer_first_name: customerInfo?.firstName || "Customer",
         order_customer_last_name: customerInfo?.lastName || "Name"
       };
+
+      console.log('Payflowly Request:', {
+        url: PAYFLOWLY_API_URL,
+        payload: payflowlyPayload
+      });
 
       const response = await fetch(PAYFLOWLY_API_URL, {
         method: 'POST',
@@ -84,17 +91,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         body: JSON.stringify(payflowlyPayload)
       });
 
+      console.log('Payflowly Response Status:', response.status);
+      
       if (!response.ok) {
-        throw new Error(`Payflowly API error: ${response.status}`);
+        const errorText = await response.text();
+        console.log('Payflowly Error Response:', errorText);
+        throw new Error(`Payflowly API error: ${response.status} - ${errorText}`);
       }
 
       const paymentData = await response.json();
+      
+      // Log the response to see the structure
+      console.log('Payflowly Response:', paymentData);
+
+      // Extract the payment URL from response
+      const paymentUrl = paymentData.url || paymentData.payment_url || paymentData.link;
+
+      if (!paymentUrl) {
+        throw new Error('No payment URL received from Payflowly');
+      }
 
       res.json({ 
-        paymentUrl: paymentData.payment_url || paymentData.url,
+        paymentUrl,
         orderId: order.id,
-        orderNumber: order.orderNumber,
-        paymentData
+        orderNumber: order.orderNumber
       });
     } catch (error: any) {
       res.status(500).json({ message: "Error creating payment link: " + error.message });

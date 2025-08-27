@@ -46,6 +46,10 @@ function CheckoutForm() {
 
       const data = await response.json();
 
+      if (!response.ok) {
+        throw new Error(data.message || 'Payment link creation failed');
+      }
+
       if (data.paymentUrl) {
         // Store order info for success page
         sessionStorage.setItem('pendingOrder', JSON.stringify({
@@ -53,10 +57,10 @@ function CheckoutForm() {
           orderId: data.orderId
         }));
         
-        // Redirect to payment page
+        // Redirect to Payflowly payment page
         window.location.href = data.paymentUrl;
       } else {
-        throw new Error('No payment URL received');
+        throw new Error('No payment URL received from payment processor');
       }
     } catch (error: any) {
       toast({
