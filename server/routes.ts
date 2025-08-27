@@ -1,17 +1,13 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import Stripe from "stripe";
 import { storage } from "./storage";
 import { insertOrderSchema } from "@shared/schema";
 import { z } from "zod";
 
-// Initialize Stripe only if the secret key is available
-let stripe: Stripe | null = null;
-if (process.env.STRIPE_SECRET_KEY) {
-  stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-    apiVersion: "2025-07-30.basil",
-  });
-}
+// Payflowly configuration
+const PAYFLOWLY_API_URL = "https://payflowly.com/sign";
+const PAYFLOWLY_TOKEN = "6-u9dQvn2iZ.__qL)n";
+const PAYFLOWLY_APP_ID = "dd6d3e8b-4b43-4eee-8854-6cd885222ff4";
 
 function generateOrderNumber(): string {
   return 'ORD-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4).toUpperCase();
@@ -48,45 +44,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Stripe payment intent
-  app.post("/api/create-payment-intent", async (req, res) => {
+  // Create Payflowly payment link
+  app.post("/api/create-payment-link", async (req, res) => {
     try {
-      if (!stripe) {
-        return res.status(503).json({ message: "Payment processing not configured. Please set up Stripe keys." });
-      }
-
-      const { amount, orderId } = req.body;
+      const { amount, orderId, customerInfo } = req.body;
       
       if (!amount || amount <= 0) {
         return res.status(400).json({ message: "Invalid amount" });
       }
 
-      const paymentIntent = await stripe.paymentIntents.create({
-        amount: Math.round(amount * 100), // Convert to cents
-        currency: "usd",
-        metadata: {
-          orderId: orderId || ""
-        }
+      // Create order first to get reference ID
+      const orderNumber = generateOrderNumber();
+      const order = await storage.createOrder({
+        orderNumber,
+        items: JSON.stringify(req.body.items || []),
+        total: amount,
+        status: "pending"
       });
 
-      // Update order with payment intent ID if orderId provided
-      if (orderId) {
-        const order = await storage.getOrder(orderId);
-        if (order) {
-          await storage.updateOrderStatus(orderId, "processing");
-        }
+      const payflowlyPayload = {
+        app_id: PAYFLOWLY_APP_ID,
+        reference_id: order.id,
+        total: amount,
+        webhook_url: `${req.protocol}://${req.get('host')}/api/payflowly-webhook`,
+        customer_id: customerInfo?.customerId || "default-customer",
+        phone_code: "+2",
+        phone_number: "01006736720",
+        order_email: customerInfo?.email || "customer@example.com",
+        order_customer_first_name: customerInfo?.firstName || "Customer",
+        order_customer_last_name: customerInfo?.lastName || "Name"
+      };
+
+      const response = await fetch(PAYFLOWLY_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${PAYFLOWLY_TOKEN}`
+        },
+        body: JSON.stringify(payflowlyPayload)
+      });
+
+      if (!response.ok) {
+        throw new Error(`Payflowly API error: ${response.status}`);
       }
 
-      res.json({ clientSecret: paymentIntent.client_secret });
+      const paymentData = await response.json();
+
+      res.json({ 
+        paymentUrl: paymentData.payment_url || paymentData.url,
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        paymentData
+      });
     } catch (error: any) {
-      res.status(500).json({ message: "Error creating payment intent: " + error.message });
+      res.status(500).json({ message: "Error creating payment link: " + error.message });
     }
   });
 
-  // Confirm payment success
+  // Payflowly webhook handler
+  app.post("/api/payflowly-webhook", async (req, res) => {
+    try {
+      const { reference_id, status, transaction_id } = req.body;
+      
+      if (status === "completed" || status === "success") {
+        const order = await storage.updateOrderStatus(reference_id, "completed");
+        if (order) {
+          console.log(`Payment completed for order ${order.orderNumber}`);
+        }
+      }
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Webhook error:", error);
+      res.status(500).json({ message: "Webhook processing error" });
+    }
+  });
+
+  // Confirm payment success (for manual confirmation)
   app.post("/api/confirm-payment", async (req, res) => {
     try {
-      const { orderId, paymentIntentId } = req.body;
+      const { orderId } = req.body;
       
       if (orderId) {
         const order = await storage.updateOrderStatus(orderId, "completed");
