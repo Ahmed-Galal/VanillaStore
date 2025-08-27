@@ -99,16 +99,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         throw new Error(`Payflowly API error: ${response.status} - ${errorText}`);
       }
 
-      const paymentData = await response.json();
-      
-      // Log the response to see the structure
-      console.log('Payflowly Response:', paymentData);
+      const responseText = await response.text();
+      console.log('Payflowly Raw Response:', responseText);
 
-      // Extract the payment URL from response
-      const paymentUrl = paymentData.url || paymentData.payment_url || paymentData.link;
+      let paymentUrl = null;
+      
+      // Try to parse as JSON first
+      try {
+        const paymentData = JSON.parse(responseText);
+        console.log('Payflowly JSON Response:', paymentData);
+        paymentUrl = paymentData.url || paymentData.payment_url || paymentData.link;
+      } catch (jsonError) {
+        // If not JSON, check if it's a direct URL
+        if (responseText.startsWith('http')) {
+          paymentUrl = responseText.trim();
+          console.log('Payflowly returned direct URL:', paymentUrl);
+        } else {
+          // Try to extract URL from HTML response
+          const urlMatch = responseText.match(/https?:\/\/[^\s"'>]+/);
+          if (urlMatch) {
+            paymentUrl = urlMatch[0];
+            console.log('Extracted URL from response:', paymentUrl);
+          }
+        }
+      }
 
       if (!paymentUrl) {
-        throw new Error('No payment URL received from Payflowly');
+        throw new Error('No payment URL found in Payflowly response');
       }
 
       res.json({ 
