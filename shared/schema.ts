@@ -17,6 +17,12 @@ export const orders = pgTable("orders", {
   stripePaymentIntentId: text("stripe_payment_intent_id"),
   status: text("status").notNull().default("pending"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  customerFirstName: text("customer_first_name"),
+  customerLastName: text("customer_last_name"),
+  customerEmail: text("customer_email"),
+  customerPhone: text("customer_phone"),
+  payflowlyPaymentUrl: text("payflowly_payment_url"),
+  payflowlyReferenceId: text("payflowly_reference_id"),
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({

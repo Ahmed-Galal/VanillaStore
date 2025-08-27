@@ -15,6 +15,11 @@ function generateOrderNumber(): string {
 
 export async function registerRoutes(app: Express): Promise<Server> {
   
+  // Health check endpoint
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "OK", timestamp: new Date().toISOString() });
+  });
+  
   // Create order
   app.post("/api/orders", async (req, res) => {
     try {
@@ -59,7 +64,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         orderNumber,
         items: JSON.stringify(req.body.items || []),
         total: amount,
-        status: "pending"
+        status: "pending",
+        customerFirstName: customerInfo?.firstName,
+        customerLastName: customerInfo?.lastName,
+        customerEmail: customerInfo?.email,
+        customerPhone: customerInfo?.phone,
       });
 
       const webhookUrl = `${req.protocol}://${req.get('host')}/api/payflowly-webhook`;
@@ -127,6 +136,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!paymentUrl) {
         throw new Error('No payment URL found in Payflowly response');
       }
+
+      // Store payment URL in order for reference
+      await storage.updateOrder(order.id, {
+        payflowlyPaymentUrl: paymentUrl,
+        payflowlyReferenceId: order.id
+      });
 
       res.json({ 
         paymentUrl,
